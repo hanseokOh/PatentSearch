@@ -84,11 +84,90 @@ def semantic_search(topk, query):
     for rank, info in enumerate(search_result[0]):
         results['results'].append({
             'rank': rank+1,
-#             'score': float(info.distance),
             'doc_info': info.entity
         })
 
-    # build new index for rerank using bi-encoder
+#     # build new index for rerank using bi-encoder
+#     selected_results= [doc['doc_info'].to_dict()['entity'] for doc in results['results']]
+
+#     print("selected_results:",len(selected_results))
+        
+#     fields = [
+#         FieldSchema(name="ids", dtype=DataType.INT64, is_primary=True, auto_id=False),
+#         FieldSchema(name="patent_id", dtype=DataType.VARCHAR,max_length=50),
+#         FieldSchema(name="title", dtype=DataType.VARCHAR,max_length=1000),
+#         FieldSchema(name="text", dtype=DataType.VARCHAR,max_length=10000),
+#         FieldSchema(name="embeddings", dtype=DataType.FLOAT_VECTOR, dim=768)
+#     ]
+
+#     schema = CollectionSchema(fields, "Temporary collection for rerank")
+    
+#     if utility.has_collection("re_patent_search"):
+#         print("Drop existing collection")
+#         utility.drop_collection("re_patent_search")
+        
+#     rerank_db = Collection("re_patent_search", schema)
+#     print("New collection added")
+
+#     #     dict_keys(['ids', 'patent_id', 'title', 'text', 'embeddings'])
+#     entities = [
+#         [pair['ids'] for pair in selected_results], # field pk
+#         [pair['patent_id'] for pair in selected_results], # field patent_id
+#         [pair['title'] for pair in selected_results], # field title
+#         [pair['text'] for pair in selected_results], # field text
+#         [pair['embeddings'] for pair in selected_results] # field embeddings
+#     ]
+
+#     insert_result = rerank_db.insert(entities)
+#     rerank_db.flush()
+    
+#     index = {
+#         "index_type": "IVF_FLAT",
+#         "metric_type": "L2",
+#         "params": {"nlist": 128},
+#     }
+
+#     rerank_db.create_index("embeddings", index)
+#     rerank_db.load()
+#     print("Data indexing completed.")
+
+    return results
+
+
+def keyword_search(topk, query):
+    searcher = LuceneSearcher(index_file)
+    hits = searcher.search(q=query, k=topk)
+    print("hits:", hits)
+    results = {'topk': topk, 'index': index_file, 'results': []}
+
+    for rank in range(len(hits)):
+        print(f'{rank+1:2} {hits[rank].docid:4} {hits[rank].score:.5f}')
+
+        docid = hits[rank].docid
+        score = hits[rank].score
+        idx = int(docid[1:])
+
+        results['results'].append({
+            'rank': rank+1,
+            'score': float(score),
+            'doc_info': corpus[int(idx)]
+        })
+    return results
+
+
+def search(mode, topk, query):
+    s = time.time()
+    if 'mContriever' in mode:
+        return semantic_search(topk, query)
+    else:
+        return keyword_search(topk, query)
+
+
+def rerank(query, rerank_topk):
+    ############
+    # Rerank with bi encoder
+    ############
+        # build new index for rerank using bi-encoder
     selected_results= [doc['doc_info'].to_dict()['entity'] for doc in results['results']]
 
     print("selected_results:",len(selected_results))
@@ -132,42 +211,7 @@ def semantic_search(topk, query):
     rerank_db.load()
     print("Data indexing completed.")
 
-    return results
-
-
-def keyword_search(topk, query):
-    searcher = LuceneSearcher(index_file)
-    hits = searcher.search(q=query, k=topk)
-    print("hits:", hits)
-    results = {'topk': topk, 'index': index_file, 'results': []}
-
-    for rank in range(len(hits)):
-        print(f'{rank+1:2} {hits[rank].docid:4} {hits[rank].score:.5f}')
-
-        docid = hits[rank].docid
-        score = hits[rank].score
-        idx = int(docid[1:])
-
-        results['results'].append({
-            'rank': rank+1,
-            'score': float(score),
-            'doc_info': corpus[int(idx)]
-        })
-    return results
-
-
-def search(mode, topk, query):
-    s = time.time()
-    if 'mContriever' in mode:
-        return semantic_search(topk, query)
-    else:
-        return keyword_search(topk, query)
-
-
-def rerank(query, rerank_topk):
-    ############
-    # Rerank with bi encoder
-    ############
+    
     rerank_st = time.time()
     with torch.no_grad():
         query_tensor = tokenizer(
