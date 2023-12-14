@@ -1,5 +1,4 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
-
 import os
 import glob
 import torch
@@ -259,11 +258,23 @@ def load_passages_xlsx(path):
 
     data = pd.ExcelFile(path)
     df = pd.read_excel(data,sheetList[0])
+    # Add : fillna 
+    df['요약'] = df['요약'].fillna("No text")
 
-    # summary_corpus = []
     for id in range(len(df)):
         instance= df.iloc[id,:].to_dict()
-        passages.append({'_id':id, 'text':instance['요약'], 'title': instance['발명의 명칭'],'metadata':{'type':'요약문','출원번호': instance['출원번호']}})
+        passages.append({
+            # '_id':id, 
+            '_id': instance['출원번호'],
+            'summary':instance['요약'], 
+            'title': instance['발명의 명칭'],
+            'metadata':{
+                'type':'요약문',
+                '출원번호': instance['출원번호'],
+                '출원인': instance['출원인'],
+
+                }
+        })
         
     logger.info(f"Loading {len(passages)} passages")
     

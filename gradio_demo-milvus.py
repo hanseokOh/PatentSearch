@@ -1,5 +1,3 @@
-import gradio as gr
-import torch
 import numpy as np
 import json
 import random
@@ -8,44 +6,80 @@ from tqdm import tqdm
 import pickle
 from datasets import load_dataset
 from collections import defaultdict
-import time
-from easydict import EasyDict
-from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassification
-
 from sklearn.cluster import KMeans
 from pyserini.search.lucene import LuceneSearcher
-import openai
 
-# import src.contriever
 import glob
+
+
+import gradio as gr
+import torch
+import time
+from transformers import AutoTokenizer, AutoModel
+from easydict import EasyDict
+
 from pymilvus import (
     connections,
     utility,
-    FieldSchema,
-    CollectionSchema,
-    DataType,
     Collection,
 )
 
+######################
+######################
+######################
+# Create a Milvus connection
+def create_connection():
+    print(f"\nCreate connection...")
+    connections.connect(host=_HOST, port=_PORT)
+    print(f"\nList connections:")
+    print(connections.list_connections())
 
-# summary_corpus 20000
-connections.connect("default", host="localhost", port="19530")
-collection_name= "patent_search"
-collection = Collection(collection_name)      # Get an existing collection.
-collection.load()
-print("Collection:",collection)
-print("Data indexing completed.")
+def has_collection(name):
+    return utility.has_collection(name)
+
+# List all collections in Milvus
+def list_collections():
+    print("\nlist collections:")
+    print(utility.list_collections())
+
+def get_entity_num(collection):
+    print("\nThe number of entity:")
+    print(collection.num_entities)
 
 
-def mean_pooling(token_embeddings, mask):
-    token_embeddings = token_embeddings.masked_fill(
-        ~mask[..., None].bool(), 0.)
-    sentence_embeddings = token_embeddings.sum(
-        dim=1) / mask.sum(dim=1)[..., None]
-    return sentence_embeddings
+def load_collection(collection):
+    collection.load()
+
+def release_collection(collection):
+    collection.release()
+
+def _search(collection, topk, search_vectors):
+    # Index parameters
+    _METRIC_TYPE = 'L2'
+    _NPROBE = 16
+
+    search_param = {
+        "data": search_vectors,
+        "anns_field": 'embeddings',
+        "param": {"metric_type": _METRIC_TYPE, "params": {"nprobe": _NPROBE}},
+        "limit": topk,
+        # "expr": "id_field >= 0",
+        # 'output_fields': ["id_field","patent_id","title","text","embeddings"]
+        'output_fields': ["title","summary"]
+        }
+
+    results = collection.search(**search_param)
+    return results 
 
 
 def semantic_search(topk, query):
+    def _mean_pooling(token_embeddings, mask):
+        token_embeddings = token_embeddings.masked_fill(
+            ~mask[..., None].bool(), 0.)
+        sentence_embeddings = token_embeddings.sum(
+            dim=1) / mask.sum(dim=1)[..., None]
+        return sentence_embeddings
+
     global results, collection, rerank_db
     retrieval_st = time.time()
     with torch.no_grad():
@@ -59,200 +93,33 @@ def semantic_search(topk, query):
         query_tensor = {k: v.to(device) for k, v in query_tensor.items()}
         outputs = query_encoder(**query_tensor)
 
-        query_emb = mean_pooling(
+        query_emb = _mean_pooling(
             outputs[0], query_tensor['attention_mask']).detach().cpu().numpy()
 
-    search_params = {
-        "metric_type": "L2",
-        "params": {"nprobe": 10},
-    }
+    search_result = _search(collection, topk, query_emb)
 
-    search_result = collection.search(
-        query_emb, 
-        "embeddings", 
-        search_params, 
-        limit=topk, 
-        output_fields=["ids","patent_id","title","text","embeddings"]
-    )
-
-
-    print("### time spent for retrieval:", time.time()-retrieval_st)
+    search_time = time.time()-retrieval_st
+    print(f"### time spent for retrieval: {search_time:.4f}")
 
     # corpus
-    results = {'type': 'retrieved', 'topk': topk,'results': []}
-    
+    results = {
+        'type': 'retrieved', 
+        'search_time': round(search_time,5),
+        'topk': topk,
+        'results': []}
+
     for rank, info in enumerate(search_result[0]):
         results['results'].append({
             'rank': rank+1,
             'doc_info': info.entity
         })
 
-#     # build new index for rerank using bi-encoder
-#     selected_results= [doc['doc_info'].to_dict()['entity'] for doc in results['results']]
-
-#     print("selected_results:",len(selected_results))
-        
-#     fields = [
-#         FieldSchema(name="ids", dtype=DataType.INT64, is_primary=True, auto_id=False),
-#         FieldSchema(name="patent_id", dtype=DataType.VARCHAR,max_length=50),
-#         FieldSchema(name="title", dtype=DataType.VARCHAR,max_length=1000),
-#         FieldSchema(name="text", dtype=DataType.VARCHAR,max_length=10000),
-#         FieldSchema(name="embeddings", dtype=DataType.FLOAT_VECTOR, dim=768)
-#     ]
-
-#     schema = CollectionSchema(fields, "Temporary collection for rerank")
-    
-#     if utility.has_collection("re_patent_search"):
-#         print("Drop existing collection")
-#         utility.drop_collection("re_patent_search")
-        
-#     rerank_db = Collection("re_patent_search", schema)
-#     print("New collection added")
-
-#     #     dict_keys(['ids', 'patent_id', 'title', 'text', 'embeddings'])
-#     entities = [
-#         [pair['ids'] for pair in selected_results], # field pk
-#         [pair['patent_id'] for pair in selected_results], # field patent_id
-#         [pair['title'] for pair in selected_results], # field title
-#         [pair['text'] for pair in selected_results], # field text
-#         [pair['embeddings'] for pair in selected_results] # field embeddings
-#     ]
-
-#     insert_result = rerank_db.insert(entities)
-#     rerank_db.flush()
-    
-#     index = {
-#         "index_type": "IVF_FLAT",
-#         "metric_type": "L2",
-#         "params": {"nlist": 128},
-#     }
-
-#     rerank_db.create_index("embeddings", index)
-#     rerank_db.load()
-#     print("Data indexing completed.")
-
-    return results
-
-
-def keyword_search(topk, query):
-    searcher = LuceneSearcher(index_file)
-    hits = searcher.search(q=query, k=topk)
-    print("hits:", hits)
-    results = {'topk': topk, 'index': index_file, 'results': []}
-
-    for rank in range(len(hits)):
-        print(f'{rank+1:2} {hits[rank].docid:4} {hits[rank].score:.5f}')
-
-        docid = hits[rank].docid
-        score = hits[rank].score
-        idx = int(docid[1:])
-
-        results['results'].append({
-            'rank': rank+1,
-            'score': float(score),
-            'doc_info': corpus[int(idx)]
-        })
     return results
 
 
 def search(mode, topk, query):
-    s = time.time()
     if 'mContriever' in mode:
         return semantic_search(topk, query)
-    else:
-        return keyword_search(topk, query)
-
-
-def rerank(query, rerank_topk):
-    ############
-    # Rerank with bi encoder
-    ############
-        # build new index for rerank using bi-encoder
-    selected_results= [doc['doc_info'].to_dict()['entity'] for doc in results['results']]
-
-    print("selected_results:",len(selected_results))
-        
-    fields = [
-        FieldSchema(name="ids", dtype=DataType.INT64, is_primary=True, auto_id=False),
-        FieldSchema(name="patent_id", dtype=DataType.VARCHAR,max_length=50),
-        FieldSchema(name="title", dtype=DataType.VARCHAR,max_length=1000),
-        FieldSchema(name="text", dtype=DataType.VARCHAR,max_length=10000),
-        FieldSchema(name="embeddings", dtype=DataType.FLOAT_VECTOR, dim=768)
-    ]
-
-    schema = CollectionSchema(fields, "Temporary collection for rerank")
-    
-    if utility.has_collection("re_patent_search"):
-        print("Drop existing collection")
-        utility.drop_collection("re_patent_search")
-        
-    rerank_db = Collection("re_patent_search", schema)
-    print("New collection added")
-
-    #     dict_keys(['ids', 'patent_id', 'title', 'text', 'embeddings'])
-    entities = [
-        [pair['ids'] for pair in selected_results], # field pk
-        [pair['patent_id'] for pair in selected_results], # field patent_id
-        [pair['title'] for pair in selected_results], # field title
-        [pair['text'] for pair in selected_results], # field text
-        [pair['embeddings'] for pair in selected_results] # field embeddings
-    ]
-
-    insert_result = rerank_db.insert(entities)
-    rerank_db.flush()
-    
-    index = {
-        "index_type": "IVF_FLAT",
-        "metric_type": "L2",
-        "params": {"nlist": 128},
-    }
-
-    rerank_db.create_index("embeddings", index)
-    rerank_db.load()
-    print("Data indexing completed.")
-
-    
-    rerank_st = time.time()
-    with torch.no_grad():
-        query_tensor = tokenizer(
-            query,
-            return_tensors="pt",
-            max_length=32,
-            padding=True,
-            truncation=True,
-        )
-        query_tensor = {k: v.to(device) for k, v in query_tensor.items()}
-        outputs = query_encoder(**query_tensor)
-        query_emb = mean_pooling(
-            outputs[0], query_tensor['attention_mask']).detach().cpu().numpy()
-        
-    search_params = {
-        "metric_type": "L2",
-        "params": {"nprobe": 10},
-    }
-
-    search_result = rerank_db.search(
-        query_emb, 
-        "embeddings", 
-        search_params, 
-        limit=rerank_topk, 
-        output_fields=["ids","patent_id","title","text","embeddings"]
-    )
-
-    print("### time spent for rerank:", time.time()-rerank_st)
-
-    # corpus
-    re_results = {'type': 'reranked', 'topk': rerank_topk,'results': []}
-    
-    for rank, info in enumerate(search_result[0]):
-        re_results['results'].append({
-            'rank': rank+1,
-            'doc_info': info.entity
-        })
-
-
-    return re_results
-
 
 args = EasyDict({
     'mode': 'mContriever-msmarco',
@@ -269,8 +136,22 @@ model.eval()
 
 query_encoder = model
 doc_encoder = model
-
 print('load model')
+
+# create a connection
+_HOST = '127.0.0.1'
+_PORT = '19530'
+
+# Const names
+_COLLECTION_NAME = 'patent'
+
+create_connection()
+if has_collection(_COLLECTION_NAME):
+    print("Collection exists!\n")
+    collection = Collection(_COLLECTION_NAME)
+    load_collection(collection)
+    get_entity_num(collection)
+
 
 with gr.Blocks() as demo:
     gr.Markdown(
@@ -281,7 +162,7 @@ with gr.Blocks() as demo:
     with gr.Row():
         with gr.Column():
             mode = gr.Dropdown(
-                ["bm25", "mContriever-msmarco"],
+                ["mContriever-msmarco"],
                 value="mContriever-msmarco",
                 label="mode",
                 info="select retrieval model")
@@ -323,7 +204,5 @@ with gr.Blocks() as demo:
 
     print("## DEBUG:", args, mode, topk, query[0])
     b1.click(search, inputs=[mode, topk, query[0]], outputs=[json_result])
-    b3.click(rerank, inputs=[query[0], topk],
-             outputs=[json_result])
 
 demo.launch()
