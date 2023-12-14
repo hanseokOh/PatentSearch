@@ -14,16 +14,11 @@ from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassific
 
 from sklearn.cluster import KMeans
 from pyserini.search.lucene import LuceneSearcher
-import openai
-
-# import src.contriever
 import glob
 
-
-# summary_corpus 20000
 corpus_path = 'data/summary_origin/corpus.jsonl'
-save_file = '../nable_kaist/baselines/contriever/hs_experiment/mcontriever-summary2/embeddings/passages_*'
-index_file = '../bm25/indexes/summary_origin2_ko'
+save_file = 'model/index/mcontriever-msmarco_20000/embeddings/passages_*'
+index_file = 'baselines/bm25/indexes/summary_origin2_ko'
 
 corpus = load_dataset('json', data_files={
     'corpus': corpus_path})['corpus']
@@ -44,6 +39,7 @@ for i, file_path in enumerate(embedding_files):
     allembeddings = np.vstack(
         (allembeddings, embeddings)) if allembeddings.size else embeddings
     allids.extend([int(id[1:]) for id in ids])
+    # allids.extend([int(id) for id in ids])
 
 allids = np.array(allids)
 
@@ -61,6 +57,7 @@ print("index.ntotal:", index.ntotal)
 print("Data indexing completed.")
 
 
+    
 def mean_pooling(token_embeddings, mask):
     token_embeddings = token_embeddings.masked_fill(
         ~mask[..., None].bool(), 0.)
@@ -71,6 +68,7 @@ def mean_pooling(token_embeddings, mask):
 
 def semantic_search(topk, query):
     global results, re_index
+
     retrieval_st = time.time()
     with torch.no_grad():
         query_tensor = tokenizer(
@@ -91,9 +89,6 @@ def semantic_search(topk, query):
     D, I = index.search(query_emb, topk)
 
     print("### time spent for retrieval:", time.time()-retrieval_st)
-
-    # print(D)
-    # print(I)
 
     # corpus
     results = {'type': 'retrieved', 'topk': topk,
@@ -178,8 +173,6 @@ def rerank(query, rerank_topk):
         query_emb = mean_pooling(
             outputs[0], query_tensor['attention_mask']).detach().cpu().numpy()
 
-        # contriever way
-        # query_emb = outputs.detach().cpu().numpy()
 
     D, I = re_index.search(query_emb, rerank_topk)
     print("### time spent for rerank:", time.time()-rerank_st)
@@ -209,12 +202,6 @@ model = AutoModel.from_pretrained(args.model_name_or_path)
 model = model.to(device)
 model.eval()
 
-# model, tokenizer, _ = src.contriever.load_retriever(
-#     args.model_name_or_path)
-# model = model.to(device)
-# model.eval()
-
-
 query_encoder = model
 doc_encoder = model
 
@@ -222,7 +209,7 @@ print('load model')
 
 with gr.Blocks() as demo:
     gr.Markdown(
-        """
+    """
     # Patent Retrieval System
     """
     )
