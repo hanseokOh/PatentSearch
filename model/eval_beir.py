@@ -36,7 +36,6 @@ def main(args):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     logger.info(f"Device info: {device}")
     model, tokenizer, _ = src.contriever.load_retriever(args.model_name_or_path)
-    # model = model.cuda()
     model = model.to(device)
     model.eval()
     query_encoder = model

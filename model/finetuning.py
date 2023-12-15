@@ -98,7 +98,6 @@ def finetuning(opt, model, optimizer, scheduler, tokenizer, step):
                 run_stats.reset()
 
             if step % opt.eval_freq == 0:
-
                 train.eval_model(opt, eval_model, None, tokenizer, tb_logger, step)
                 evaluate(opt, eval_model, tokenizer, tb_logger, step)
 
@@ -224,8 +223,6 @@ def main():
     model = model.cuda()
 
     optimizer, scheduler = utils.set_optim(opt, model)
-    # if dist_utils.is_main():
-    #    utils.save(model, optimizer, scheduler, global_step, 0., opt, opt.output_dir, f"step-{0}")
     logger.info(utils.get_parameters(model))
 
     for name, module in model.named_modules():

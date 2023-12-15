@@ -4,6 +4,7 @@ import os
 from collections import defaultdict
 from typing import List, Dict
 import numpy as np
+import glob
 import torch
 import torch.distributed as dist
 
@@ -59,7 +60,6 @@ class DenseEncoderModel:
 
         allemb = []
         nbatch = (len(queries) - 1) // batch_size + 1
-        # HS - edit
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
         with torch.no_grad():
@@ -76,7 +76,6 @@ class DenseEncoderModel:
                     return_tensors="pt",
                 )
                 # HS
-                # qencode = {key: value.cuda() for key, value in qencode.items()}
                 qencode = {key: value.to(device)
                            for key, value in qencode.items()}
                 emb = self.query_encoder(**qencode, normalize=self.norm_query)
@@ -84,7 +83,6 @@ class DenseEncoderModel:
 
         allemb = torch.cat(allemb, dim=0)
         # HS - edit
-        # allemb = allemb.cuda()
         allemb = allemb.to(device)
         if dist.is_initialized():
             allemb = dist_utils.varsize_gather_nograd(allemb)
@@ -109,7 +107,6 @@ class DenseEncoderModel:
         allemb = []
         nbatch = (len(corpus) - 1) // batch_size + 1
 
-        # HS - edit
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
         with torch.no_grad():
@@ -125,15 +122,12 @@ class DenseEncoderModel:
                     add_special_tokens=self.add_special_tokens,
                     return_tensors="pt",
                 )
-                # HS
-                # cencode = {key: value.cuda() for key, value in cencode.items()}
                 cencode = {key: value.to(device)
                            for key, value in cencode.items()}
                 emb = self.doc_encoder(**cencode, normalize=self.norm_doc)
                 allemb.append(emb.cpu())
 
         allemb = torch.cat(allemb, dim=0)
-        # allemb = allemb.cuda()
         allemb = allemb.to(device)
         if dist.is_initialized():
             allemb = dist_utils.varsize_gather_nograd(allemb)
@@ -153,7 +147,7 @@ def evaluate_model(
     is_main=True,
     split="test",
     score_function="dot",
-    beir_dir="BEIR/datasets",
+    beir_dir="./",
     save_results_path=None,
     lower_case=False,
     normalize_text=False,
@@ -188,77 +182,25 @@ def evaluate_model(
     retriever = EvaluateRetrieval(dmodel, score_function=score_function)
 
     # HS: edit - Add code for custom dataset
-    if 'processed' in dataset:
-        print("### Custom data mode - split:",split)
-        data_path = dataset
-        corpus, queries, qrels = GenericDataLoader(data_folder=data_path).load(split=split) # hs : edit 
+    print("### Custom data mode - split:",split)
+    data_path = dataset
+    print("data_path:",data_path)
 
-        # corpus, queries, qrels = GenericDataLoader(
-            # data_folder=data_path, qrels_file=os.path.join(data_path, 'qrels/test.tsv')).load_custom() # hs : edit 
-            # data_folder=data_path, qrels_file=os.path.join(data_path, 'qrels/qrels.tsv')).load_custom() # hs : edit 
-            # data_folder=data_path, qrels_file=os.path.join(data_path, 'qrels/filtered.test.tsv')).load_custom() # hs : edit 
-            # data_folder=data_path, qrels_file=os.path.join(data_path, 'qrels/high_lexical.filtered.test.tsv')).load_custom()
-            # data_folder=data_path, qrels_file=os.path.join(data_path, 'qrels/high_semantic.filtered.qrels.tsv')).load_custom()
+    corpus, queries, qrels = GenericDataLoader(data_folder=data_path).load(split=split) 
 
-        print(f"loaded data info: - corpus:{len(corpus)}, queries:{len(queries)}, qrels:{len(qrels)}")
-        results = retriever.retrieve(corpus, queries)
-        if is_main:
-            ndcg, _map, recall, precision = retriever.evaluate(
-                qrels, results, retriever.k_values)
-            for metric in (ndcg, _map, recall, precision, "mrr", "recall_cap", "hole"):
-                if isinstance(metric, str):
-                    metric = retriever.evaluate_custom(
-                        qrels, results, retriever.k_values, metric=metric)
-                for key, value in metric.items():
-                    metrics[key].append(value)
-            if save_results_path is not None:
-                torch.save(results, f"{save_results_path}")
-
-    else:
-        print("### Beir mode")
-        # Beir data
-        data_path = os.path.join(beir_dir, dataset)
-
-        if not os.path.isdir(data_path) and is_main:
-            url = "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/{}.zip".format(
-                dataset)
-            data_path = beir.util.download_and_unzip(url, beir_dir)
-        dist_utils.barrier()
-
-        if not dataset == "cqadupstack":
-            corpus, queries, qrels = GenericDataLoader(
-                data_folder=data_path).load(split=split)
-            results = retriever.retrieve(corpus, queries)
-            if is_main:
-                ndcg, _map, recall, precision = retriever.evaluate(
-                    qrels, results, retriever.k_values)
-                for metric in (ndcg, _map, recall, precision, "mrr", "recall_cap", "hole"):
-                    if isinstance(metric, str):
-                        metric = retriever.evaluate_custom(
-                            qrels, results, retriever.k_values, metric=metric)
-                    for key, value in metric.items():
-                        metrics[key].append(value)
-                if save_results_path is not None:
-                    torch.save(results, f"{save_results_path}")
-        elif dataset == "cqadupstack":  # compute macroaverage over datasets
-            paths = glob.glob(data_path)
-            for path in paths:
-                corpus, queries, qrels = GenericDataLoader(
-                    data_folder=data_folder).load(split=split)
-                results = retriever.retrieve(corpus, queries)
-                if is_main:
-                    ndcg, _map, recall, precision = retriever.evaluate(
-                        qrels, results, retriever.k_values)
-                    for metric in (ndcg, _map, recall, precision, "mrr", "recall_cap", "hole"):
-                        if isinstance(metric, str):
-                            metric = retriever.evaluate_custom(
-                                qrels, results, retriever.k_values, metric=metric)
-                        for key, value in metric.items():
-                            metrics[key].append(value)
-            for key, value in metrics.items():
-                assert (
-                    len(value) == 12
-                ), f"cqadupstack includes 12 datasets, only {len(value)} values were compute for the {key} metric"
+    print(f"loaded data info: - corpus:{len(corpus)}, queries:{len(queries)}, qrels:{len(qrels)}")
+    results = retriever.retrieve(corpus, queries)
+    if is_main:
+        ndcg, _map, recall, precision = retriever.evaluate(
+            qrels, results, retriever.k_values)
+        for metric in (ndcg, _map, recall, precision, "mrr", "recall_cap", "hole"):
+            if isinstance(metric, str):
+                metric = retriever.evaluate_custom(
+                    qrels, results, retriever.k_values, metric=metric)
+            for key, value in metric.items():
+                metrics[key].append(value)
+        if save_results_path is not None:
+            torch.save(results, f"{save_results_path}")
 
     metrics = {key: 100 * np.mean(value) for key, value in metrics.items()}
 

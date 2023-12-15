@@ -77,9 +77,9 @@ def main(args):
     if not args.no_fp16:
         model = model.half()
 
-    # passages = src.data.load_passages(args.passages)
+    passages = src.data.load_passages(args.passages)
     # hs : edit
-    passages = src.data.load_passages_xlsx(args.passages)
+    # passages = src.data.load_passages_xlsx(args.passages)
     
     shard_size = len(passages) // args.num_shards
     start_idx = args.shard_id * shard_size
