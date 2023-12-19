@@ -183,7 +183,7 @@ def evaluate_model(
 
     # HS: edit - Add code for custom dataset
     print("### Custom data mode - split:",split)
-    data_path = dataset
+    data_path = os.path.join(beir_dir,dataset)
     print("data_path:",data_path)
 
     corpus, queries, qrels = GenericDataLoader(data_folder=data_path).load(split=split) 
