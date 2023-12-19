@@ -18,7 +18,9 @@ import glob
 
 corpus_path = 'data/summary_origin/corpus.jsonl'
 save_file = 'model/index/mcontriever-msmarco_20000/embeddings/passages_*'
-index_file = 'baselines/bm25/indexes/summary_origin2_ko'
+# index_file = 'baselines/bm25/indexes/summary_origin2_ko'
+index_file = 'baselines/bm25/indexes/final_summary_origin_20000'
+
 
 corpus = load_dataset('json', data_files={
     'corpus': corpus_path})['corpus']
@@ -210,7 +212,7 @@ print('load model')
 with gr.Blocks() as demo:
     gr.Markdown(
     """
-    # Patent Retrieval System
+    # Smart Patent Search
     """
     )
     with gr.Row():

@@ -5,10 +5,12 @@ echo "Model Evaluation!"
 #### OPTIONS & ENV Variables
 ##################
 DATA_PATH="../data/generated_summary_ver"
+# DATA_PATH="../data/new_summary_origin_20000"
 BSIZE=64 
 
-CKPT='facebook/mcontriever-msmarco' # 
-# CKPT='checkpoint/finetuned.contriever.summary2.w_negative.merge.query_origin.llm_gen_16000.fix/checkpoint/step-16000/'
+CKPT='facebook/mcontriever-msmarco' 
+# Help: Use trained ckpt => change STEP Env
+# CKPT='./checkpoint/re.final.finetuned.contriever/checkpoint/step-${STEP}'
 
 echo "CKPT: $CKPT"
 

@@ -29,7 +29,7 @@ _ID_FIELD_NAME = 'id_field'
 _VECTOR_FIELD_NAME = 'embeddings'
 
 # Index parameters
-_METRIC_TYPE = 'L2'
+_METRIC_TYPE = 'IP'
 _INDEX_TYPE = 'IVF_FLAT'
 _NLIST = 1024
 _NPROBE = 16
@@ -195,7 +195,7 @@ def main(args):
     print(len(passages[0]['summary']))
     entities = [
         allids,  # field id_field
-        [pair['metadata']['출원번호'] for pair in passages], # field patent_id
+        [pair['metadata']['patent_id'] for pair in passages], # field patent_id
         [pair['title'] for pair in passages], # field title
         [pair['summary'][:10000] for pair in passages], # field text
         allembeddings # field embeddings

@@ -270,23 +270,12 @@ def load_passages_xlsx(path):
             'title': instance['발명의 명칭'],
             'metadata':{
                 'type':'요약문',
-                '출원번호': instance['출원번호'],
-                '출원인': instance['출원인'],
+                'patent_id': instance['출원번호'],
+                'applicant': instance['출원인'],
 
                 }
         })
         
     logger.info(f"Loading {len(passages)} passages")
     
-    # with open(path) as fin:
-    #     if path.endswith(".jsonl"):
-    #         for k, line in enumerate(fin):
-    #             ex = json.loads(line)
-    #             passages.append(ex)
-    #     else:
-    #         reader = csv.reader(fin, delimiter="\t")
-    #         for k, row in enumerate(reader):
-    #             if not row[0] == "id":
-    #                 ex = {"id": row[0], "title": row[2], "text": row[1]}
-    #                 passages.append(ex)
     return passages
