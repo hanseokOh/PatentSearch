@@ -1,6 +1,6 @@
 # Smart Patent Search 
 
-This repository shows how to build a patent search system and create a vector database (MilVus) to form an executable demonstration using gradio.
+This repository shows how to build a patent search system and create a vector database (MilVus) to run demo using gradio.
 
 ## Step1. Set environment
 ```
