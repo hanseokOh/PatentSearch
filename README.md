@@ -12,9 +12,23 @@ $ conda create -n patent_search python=3.8
 $ conda activate patent_search
 $ pip install -r requirements.txt
 
-# Option2. Build with docker container 
+# Option2. Build with docker container
+(base image : pytorch/pytorch:2.0.1-cuda11.7-cudnn8-devel)
 $ docker pull hanseokoh/patent_search:latest
 $ docker run -v ./PatentSearch:/workspace/directory -it --name patent_search --gpus all hanseokoh/patent_search:latest /bin/bash
+```
+## Step1.5. Download dataset 
+```
+
+# Option1. Manual downloading
+https://drive.google.com/drive/folders/1ExqLPJ5O0sM490DobNBOrkleMhC602XD?usp=sharing
+
+# Option2. download with gdown python library
+$ pip install gdown
+$ gdown --folder 1ExqLPJ5O0sM490DobNBOrkleMhC602XD
+
+Then move downloaded files under data directory.
+
 ```
 
 ## Step2. Training (optional if you need)
