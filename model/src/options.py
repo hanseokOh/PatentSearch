@@ -109,6 +109,29 @@ class Options:
         self.parser.add_argument("--negative_hard_min_idx", type=int, default=0)
         self.parser.add_argument("--negative_hard_ratio", type=float, default=0.0)
 
+        # Add options for PEFT (2401)
+        self.parser.add_argument("--use_peft", action="store_true", help="parameter efficient tuning - lora")
+        self.parser.add_argument("--lora_r", type=int, default=8, help="lora options for r")
+        self.parser.add_argument("--lora_dropout", type=float, default=0.1, help="lora options for dropout")
+        self.parser.add_argument("--lora_alpha", type=int, default=16, help="lora options for lora_alpha")
+        self.parser.add_argument(
+            "--lora_target_modules",
+            nargs="+",
+            default=["query","key","value"],
+            help= "comma separated list of target modules to apply LoRA layers to",
+        )
+        
+        self.parser.add_argument("--qlora", action="store_true", help="parameter efficient tuning - qlora")
+        
+        self.parser.add_argument("--use_gradient_checkpointing", action="store_true")
+        self.parser.add_argument("--use_flash_attn", action="store_true")
+        self.parser.add_argument("--use_4bit_qunatization", action="store_true", help="Whether or not to use use_4bit_qunatization.")
+        self.parser.add_argument("--use_8bit_qunatization", action="store_true", help="Whether or not to use use_8bit_qunatization.")
+        
+
+
+
+
     def print_options(self, opt):
         message = ""
         for k, v in sorted(vars(opt).items()):

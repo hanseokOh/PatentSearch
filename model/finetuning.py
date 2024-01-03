@@ -17,6 +17,8 @@ from src import data, beir_utils, slurm, dist_utils, utils, contriever, finetuni
 
 import train
 
+# hs : add 240103
+from src import peft_model
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 logger = logging.getLogger(__name__)
@@ -66,7 +68,8 @@ def finetuning(opt, model, optimizer, scheduler, tokenizer, step):
     while step < opt.total_steps:
         logger.info(f"Start epoch {epoch}, number of batches: {len(train_dataloader)}")
         for i, batch in enumerate(train_dataloader):
-            batch = {key: value.cuda() if isinstance(value, torch.Tensor) else value for key, value in batch.items()}
+            # batch = {key: value.cuda() if isinstance(value, torch.Tensor) else value for key, value in batch.items()}
+            batch = {key: value.to(model.device) if isinstance(value, torch.Tensor) else value for key, value in batch.items()}
             step += 1
 
             train_loss, iter_stats = model(**batch, stats_prefix="train")
@@ -201,8 +204,9 @@ def main():
     opt = options.parse()
 
     torch.manual_seed(opt.seed)
-    slurm.init_distributed_mode(opt)
-    slurm.init_signal_handler()
+    if torch.cuda.is_available():
+        slurm.init_distributed_mode(opt)
+        slurm.init_signal_handler()
 
     directory_exists = os.path.isdir(opt.output_dir)
     if dist.is_initialized():
@@ -216,11 +220,18 @@ def main():
 
     step = 0
 
-    retriever, tokenizer, retriever_model_id = contriever.load_retriever(opt.model_path, opt.pooling, opt.random_init)
+
+    if not opt.use_peft:
+        retriever, tokenizer, retriever_model_id = contriever.load_retriever(opt.model_path, opt.pooling, opt.random_init)
+    else:
+        retriever, tokenizer, retriever_model_id = peft_model.create_and_prepare_model(opt)
+
     opt.retriever_model_id = retriever_model_id
     model = inbatch.InBatch(opt, retriever, tokenizer)
 
-    model = model.cuda()
+    device = "cuda" if torch.cuda.is_available() else 'cpu'
+    # model = model.cuda()
+    model = model.to(device)
 
     optimizer, scheduler = utils.set_optim(opt, model)
     logger.info(utils.get_parameters(model))

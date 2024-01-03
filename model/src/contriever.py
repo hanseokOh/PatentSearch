@@ -27,6 +27,7 @@ class Contriever(BertModel):
         output_attentions=None,
         output_hidden_states=None,
         normalize=False,
+        return_dict=None,
     ):
 
         model_output = super().forward(
@@ -40,6 +41,7 @@ class Contriever(BertModel):
             encoder_attention_mask=encoder_attention_mask,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
         )
 
         last_hidden = model_output["last_hidden_state"]
@@ -123,7 +125,7 @@ def load_retriever(model_path, pooling="average", random_init=False):
             
     else:
         retriever_model_id = model_path
-        if "xlm" in retriever_model_id:
+        if "xlm" in retriever_model_id:    
             model_class = XLMRetriever
         else:
             model_class = Contriever
