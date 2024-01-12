@@ -1,16 +1,17 @@
+from langchain.chat_models import ChatOpenAI
+from langchain.schema import AIMessage, HumanMessage, SystemMessage
+import openai
+import getpass
+import gradio as gr
+import os 
+import random 
+import time 
 import numpy as np
 import json
 import random
-import faiss
 from tqdm import tqdm
-import pickle
-from datasets import load_dataset
-from collections import defaultdict
-from sklearn.cluster import KMeans
-# from pyserini.search.lucene import LuceneSearcher
 
 import glob
-
 
 import gradio as gr
 import torch
@@ -23,13 +24,13 @@ from pymilvus import (
     utility,
     Collection,
 )
-
 from peft import PeftModel, PeftConfig
 
-######################
-######################
-######################
-# Create a Milvus connection
+
+
+###############################
+##### Setting for the Milvus
+###############################
 def create_connection():
     print(f"\nCreate connection...")
     connections.connect(host=_HOST, port=_PORT)
@@ -82,7 +83,7 @@ def semantic_search(topk, query):
             dim=1) / mask.sum(dim=1)[..., None]
         return sentence_embeddings
 
-    global results, collection, rerank_db
+    global output_results, collection, rerank_db
     retrieval_st = time.time()
     with torch.no_grad():
         query_tensor = tokenizer(
@@ -95,12 +96,8 @@ def semantic_search(topk, query):
         query_tensor = {k: v.to(device) for k, v in query_tensor.items()}
         outputs = query_encoder(**query_tensor)
 
-        ###### Needed for OPTION1 / OPTION3 model loading
         query_emb = _mean_pooling(
             outputs[0], query_tensor['attention_mask']).detach().cpu().numpy()
-        
-        ###### FOR Model loading OPTION2
-        # query_emb = outputs.detach().cpu().numpy()
 
     search_result = _search(collection, topk, query_emb)
 
@@ -108,31 +105,59 @@ def semantic_search(topk, query):
     print(f"### time spent for retrieval: {search_time:.4f}")
 
     # corpus
-    results = {
+    output_results = {
         'type': 'retrieved', 
         'search_time': round(search_time,5),
         'topk': topk,
         'results': []}
 
     for rank, info in enumerate(search_result[0]):
-        results['results'].append({
+        output_results['results'].append({
             'rank': rank+1,
-            'doc_info': info.entity.to_dict()
+            # 'doc_info': info.entity
+            'doc_info': info.to_dict()
         })
 
-    return results
+    return output_results
 
 
-def search(mode, topk, query):
+def search(mode, topk, search_query):
     if 'mContriever' in mode:
-        return semantic_search(topk, query)
+        return semantic_search(topk, search_query)
 
-args = EasyDict({
-    'mode': 'mContriever-msmarco',
-    'model_name_or_path': 'facebook/mcontriever-msmarco',
-    'peft_model_path': 'checkpoint/peft_loraR.8_loraAlpha.16_lr.5e-4/checkpoint/step-20000/',
-    'use_peft':True,
-})
+
+def predict(message, history):
+    history_langchain_format = []
+    history_langchain_format.append(SystemMessage(content="""마지막 질문에 답하기 위해서 다음 문맥을 사용하세요.
+답을 모르면 모른다고 말하고 답을 만들어내려고 하지 마세요.
+답변은 최대한 간결하게 유지하세요.
+"""))
+
+    print("history:",history)
+    for human, ai in history:
+        history_langchain_format.append(HumanMessage(content=human))
+        history_langchain_format.append(AIMessage(content=ai))
+    history_langchain_format.append(HumanMessage(content=message))
+    print("history_langchain_format:",history_langchain_format)
+
+    gpt_response = llm(history_langchain_format)
+    return gpt_response.content
+
+
+def bot(history):
+    response = "**That's cool!**"
+    history[-1][1] = ""
+    for character in response:
+        history[-1][1] += character
+        time.sleep(0.05)
+        yield history
+
+
+###############################
+##### Setting for the options
+###############################
+os.environ["OPENAI_API_KEY"] = getpass.getpass() # Replace with your key
+llm = ChatOpenAI(temperature=1.0, model='gpt-3.5-turbo-0613')
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -172,11 +197,11 @@ def get_model(peft_model_name):
 tokenizer = AutoTokenizer.from_pretrained('facebook/mcontriever-msmarco')
 model = get_model('hanseokOh/smartPatent-mContriever-lora')
 
+
 model = model.to(device)
 model.eval()
 
 query_encoder = model
-doc_encoder = model
 print('load model')
 
 # create a connection
@@ -193,11 +218,14 @@ if has_collection(_COLLECTION_NAME):
     load_collection(collection)
     get_entity_num(collection)
 
-
+###############################
+##### Options for UI (gradio)
+# https://www.gradio.app/
+###############################
 with gr.Blocks() as demo:
     gr.Markdown(
     """
-    # Smart Patent Search
+    # Smart Patent Search with LLM Agent
     """
     )
     with gr.Row():
@@ -209,13 +237,69 @@ with gr.Blocks() as demo:
                 info="select retrieval model")
 
             topk = gr.Slider(1, 100, step=1, value=10,
-                             label='TopK', show_label=True)
+                                label='TopK', show_label=True)
             query = gr.Textbox(
                 placeholder="Enter query here...", label="Query"),
 
             b1 = gr.Button("Run the query")
-            b3 = gr.Button("Run the further query")
 
+            # gr.ChatInterface(predict) 
+
+            chatbot = gr.Chatbot()
+            msg = gr.Textbox()
+            clear = gr.ClearButton([msg, chatbot])
+
+            global search_query
+            search_query=""
+            
+    
+            def respond(message, chat_history):
+
+                retrieved_results = [
+                    f"제목: {doc['doc_info']['entity']['title']}, 요약문: {doc['doc_info']['entity']['summary']}"[:500] \
+                        for doc in output_results['results']][:5] 
+
+                non_truncated_retrieved_results = [
+                    f"제목: {doc['doc_info']['entity']['title']}, 요약문: {doc['doc_info']['entity']['summary']}" \
+                        for doc in output_results['results']][:5] 
+
+                print("non_truncated_retrieved_results:", [len(pair) for pair in non_truncated_retrieved_results])
+                
+                concatentated_retrieved_results = " \n".join(retrieved_results)[:2000]
+
+                print(f"concatentated_retrieved_results: length - {len(concatentated_retrieved_results)}\n{concatentated_retrieved_results}")
+                
+                print("query:",search_query)
+
+                history_langchain_format = []
+                history_langchain_format.append(SystemMessage(content=f"""마지막 질문에 답하기 위해서 다음 문맥을 사용하세요.
+                답을 모르면 모른다고 말하고 답을 만들어내려고 하지 마세요.
+                답변은 최대한 간결하게 유지하세요.
+                # 검색 질의: {search_query}.
+                # 검색 결과: {concatentated_retrieved_results}
+                """))
+
+                print("First - history_langchain_format:",history_langchain_format)
+
+                print("history:",chat_history)
+                # print("history langchain format:",history_langchain_format)
+                for human, ai in chat_history:
+                    history_langchain_format.append(HumanMessage(content=human))
+                    history_langchain_format.append(AIMessage(content=ai))
+                history_langchain_format.append(HumanMessage(content=message))
+                print("history_langchain_format:",history_langchain_format)
+
+                gpt_response = llm(history_langchain_format)
+                print("gpt_response:",gpt_response)
+                bot_message = gpt_response.content
+
+                chat_history.append((message, bot_message))
+                time.sleep(2)
+                return "", chat_history
+
+            msg.submit(respond, [msg, chatbot], [msg, chatbot])
+
+    
             gr.Examples(
                 examples=[
                     [20, '작업장 위험 알림시스템'],
@@ -239,11 +323,12 @@ with gr.Blocks() as demo:
                 ],
                 inputs=[topk, query[0]]
             )
+
         with gr.Column():
             with gr.Accordion("See Details for retrieved output"):
                 json_result = gr.JSON(label="json output")
 
-    print("## DEBUG:", args, mode, topk, query[0])
     b1.click(search, inputs=[mode, topk, query[0]], outputs=[json_result])
 
-demo.launch()
+
+demo.queue().launch()

@@ -1,30 +1,39 @@
+from langchain.chat_models import ChatOpenAI
+from langchain.schema import AIMessage, HumanMessage, SystemMessage
+import openai
+import getpass
 import gradio as gr
-import torch
+import os 
+import random 
+import time 
 import numpy as np
 import json
 import random
-import faiss
 from tqdm import tqdm
-import pickle
-from datasets import load_dataset
-from collections import defaultdict
-import time
-from easydict import EasyDict
-from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassification
 import glob
+import gradio as gr
+import torch
+import time
+from transformers import AutoTokenizer, AutoModel
+from easydict import EasyDict
+from datasets import load_dataset
+import pickle
+import faiss
 from peft import PeftModel, PeftConfig
 
+
+###############################
+##### Load file for search stage
+###############################
 corpus_path = 'data/summary_origin/corpus.jsonl'
+# Using mContriever model
 # save_file = 'index/mcontriever-msmarco_20000/embeddings/passages_*'
+# Using our tuned model's index
 save_file = 'model/index/peft_tuned.5e-4.mcontriever-msmarco_20000/embeddings/passages_*'
 
-corpus = load_dataset('json', data_files={
-    'corpus': corpus_path})['corpus']
-
+corpus = load_dataset('json', data_files={'corpus': corpus_path})['corpus']
 print("corpus path: ", corpus_path)
 print("corpus:", len(corpus))
-# print("index file for BM25:", index_file)
-
 embedding_files = glob.glob(save_file)
 print("embedding_files:", embedding_files)
 allids = []
@@ -39,7 +48,6 @@ for i, file_path in enumerate(embedding_files):
     allids.extend([int(id[1:]) for id in ids])
 
 allids = np.array(allids)
-
 print("all ids:", allids.shape)
 print(f"all embeddings size: {allembeddings.shape}")
 
@@ -48,10 +56,9 @@ index = faiss.IndexFlatIP(d)   # build the index
 index = faiss.IndexIDMap2(index)
 print("index.is_trained:", index.is_trained)
 index.add_with_ids(allembeddings.astype('float32'), allids)
-
-
 print("index.ntotal:", index.ntotal)
 print("Data indexing completed.")
+
 
 
 def semantic_search(topk, query):
@@ -62,8 +69,7 @@ def semantic_search(topk, query):
             dim=1) / mask.sum(dim=1)[..., None]
         return sentence_embeddings
 
-    global results, re_index
-
+    global output_results, collection, rerank_db
     retrieval_st = time.time()
     with torch.no_grad():
         query_tensor = tokenizer(
@@ -76,90 +82,60 @@ def semantic_search(topk, query):
         query_tensor = {k: v.to(device) for k, v in query_tensor.items()}
         outputs = query_encoder(**query_tensor)
 
-        ###### Needed for OPTION1 / OPTION3 model loading
         query_emb = _mean_pooling(
             outputs[0], query_tensor['attention_mask']).detach().cpu().numpy()
-        
-        ###### FOR Model loading OPTION2
-        # query_emb = outputs.detach().cpu().numpy()
 
     D, I = index.search(query_emb, topk)
 
-    print("### time spent for retrieval:", time.time()-retrieval_st)
+    search_time = time.time()-retrieval_st
+    print(f"### time spent for retrieval: {search_time:.4f}")
 
     # corpus
-    results = {'type': 'retrieved', 'topk': topk,
-               'index': save_file, 'results': []}
+    output_results = {
+        'type': 'retrieved', 
+        'search_time': round(search_time,5),
+        'topk': topk,
+        'results': []}
+
     for rank, (score, idx) in enumerate(zip(D[0], I[0])):
-        results['results'].append({
+        output_results['results'].append({
             'rank': rank+1,
             'score': float(score),
             'doc_info': corpus[int(idx)]
         })
 
-    # build new index for rerank using bi-encoder
-    selected_emb = np.array([])
-    embs = np.array([list(index.reconstruct_n(int(doc['doc_info']['_id'][1:]), 1)[0])
-                     for doc in results['results']])
-
-    re_allids = np.array([int(doc['doc_info']['_id'][1:])
-                         for doc in results['results']])
-    selected_emb = np.vstack(
-        (selected_emb, embs)) if selected_emb.size else embs
-
-    print("re_allids:", re_allids.shape)
-    print(f"selected_emb size: {selected_emb.shape}")
-
-    d = 768
-    re_index = faiss.IndexFlatIP(d)   # build the index
-    re_index = faiss.IndexIDMap2(re_index)
-    print(re_index.is_trained)
-
-    re_index.add_with_ids(selected_emb.astype('float32'), re_allids)
-
-    print("re_index.ntotal:", re_index.ntotal)
-    print("Data indexing completed.")
-
-    return results 
-
-def search(mode, topk, query):
-    s = time.time()
-    return semantic_search(topk, query)
+    return output_results
 
 
-def rerank(query, rerank_topk):
-    ############
-    # Rerank with bi encoder
-    ############
-    rerank_st = time.time()
-    with torch.no_grad():
-        query_tensor = tokenizer(
-            query,
-            return_tensors="pt",
-            max_length=32,
-            padding=True,
-            truncation=True,
-        )
-        query_tensor = {k: v.to(device) for k, v in query_tensor.items()}
-        outputs = query_encoder(**query_tensor)
-        query_emb = mean_pooling(
-            outputs[0], query_tensor['attention_mask']).detach().cpu().numpy()
+def search(mode, topk, search_query):
+    if 'mContriever' in mode:
+        return semantic_search(topk, search_query)
 
 
-    D, I = re_index.search(query_emb, rerank_topk)
-    print("### time spent for rerank:", time.time()-rerank_st)
+def predict(message, history):
+    history_langchain_format = []
+    history_langchain_format.append(SystemMessage(content="""마지막 질문에 답하기 위해서 다음 문맥을 사용하세요.
+답을 모르면 모른다고 말하고 답을 만들어내려고 하지 마세요.
+답변은 최대한 간결하게 유지하세요.
+"""))
 
-    re_results = {'type': 'reranked', 'topk': rerank_topk,
-                  'index': save_file + '.after_retrieval', 'results': []}
-    for rank, (score, idx) in enumerate(zip(D[0], I[0])):
-        re_results['results'].append({
-            'rank': rank+1,
-            'score': float(score),
-            'doc_info': corpus[int(idx)]
-        })
+    print("history:",history)
+    for human, ai in history:
+        history_langchain_format.append(HumanMessage(content=human))
+        history_langchain_format.append(AIMessage(content=ai))
+    history_langchain_format.append(HumanMessage(content=message))
+    print("history_langchain_format:",history_langchain_format)
 
-    return re_results
+    gpt_response = llm(history_langchain_format)
+    return gpt_response.content
 
+
+
+###############################
+##### Setting for the options
+###############################
+os.environ["OPENAI_API_KEY"] = getpass.getpass() # Replace with your key
+llm = ChatOpenAI(temperature=1.0, model='gpt-3.5-turbo-0613') # you can use other version here
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -203,33 +179,88 @@ model = model.to(device)
 model.eval()
 
 query_encoder = model
-doc_encoder = model
-
 print('load model')
 
+###############################
+##### Options for UI (gradio)
+# https://www.gradio.app/
+###############################
 with gr.Blocks() as demo:
     gr.Markdown(
     """
-    # Smart Patent Search
+    # Smart Patent Search with LLM Agent
     """
     )
     with gr.Row():
         with gr.Column():
             mode = gr.Dropdown(
-                # ["bm25", "mContriever-msmarco"],
                 ["mContriever-msmarco"],
                 value="mContriever-msmarco",
                 label="mode",
                 info="select retrieval model")
 
             topk = gr.Slider(1, 100, step=1, value=10,
-                             label='TopK', show_label=True)
+                                label='TopK', show_label=True)
             query = gr.Textbox(
                 placeholder="Enter query here...", label="Query"),
 
             b1 = gr.Button("Run the query")
-            b3 = gr.Button("Run the further query")
 
+            chatbot = gr.Chatbot()
+            msg = gr.Textbox()
+            clear = gr.ClearButton([msg, chatbot])
+
+            global search_query
+            search_query=""
+            
+    
+            def respond(message, chat_history):
+
+                retrieved_results = [
+                    f"제목: {doc['doc_info']['title']}, 요약문: {doc['doc_info']['text']}"[:500] \
+                        for doc in output_results['results']][:5] 
+
+                non_truncated_retrieved_results = [
+                    f"제목: {doc['doc_info']['title']}, 요약문: {doc['doc_info']['text']}" \
+                        for doc in output_results['results']][:5] 
+
+                print("non_truncated_retrieved_results:", [len(pair) for pair in non_truncated_retrieved_results])
+                
+                concatentated_retrieved_results = " \n".join(retrieved_results)[:2000]
+
+                print(f"concatentated_retrieved_results: length - {len(concatentated_retrieved_results)}\n{concatentated_retrieved_results}")
+                
+                print("query:",search_query)
+
+                history_langchain_format = []
+                history_langchain_format.append(SystemMessage(content=f"""마지막 질문에 답하기 위해서 다음 문맥을 사용하세요.
+                답을 모르면 모른다고 말하고 답을 만들어내려고 하지 마세요.
+                답변은 최대한 간결하게 유지하세요.
+                # 검색 질의: {search_query}.
+                # 검색 결과: {concatentated_retrieved_results}
+                """))
+
+                print("First - history_langchain_format:",history_langchain_format)
+
+                print("history:",chat_history)
+                # print("history langchain format:",history_langchain_format)
+                for human, ai in chat_history:
+                    history_langchain_format.append(HumanMessage(content=human))
+                    history_langchain_format.append(AIMessage(content=ai))
+                history_langchain_format.append(HumanMessage(content=message))
+                print("history_langchain_format:",history_langchain_format)
+
+                gpt_response = llm(history_langchain_format)
+                print("gpt_response:",gpt_response)
+                bot_message = gpt_response.content
+
+                chat_history.append((message, bot_message))
+                time.sleep(2)
+                return "", chat_history
+
+            msg.submit(respond, [msg, chatbot], [msg, chatbot])
+
+    
             gr.Examples(
                 examples=[
                     [20, '작업장 위험 알림시스템'],
@@ -253,13 +284,12 @@ with gr.Blocks() as demo:
                 ],
                 inputs=[topk, query[0]]
             )
+
         with gr.Column():
             with gr.Accordion("See Details for retrieved output"):
                 json_result = gr.JSON(label="json output")
 
-    print("## DEBUG:", args, mode, topk, query[0])
     b1.click(search, inputs=[mode, topk, query[0]], outputs=[json_result])
-    b3.click(rerank, inputs=[query[0], topk],
-             outputs=[json_result])
 
-demo.launch()
+
+demo.queue().launch()
