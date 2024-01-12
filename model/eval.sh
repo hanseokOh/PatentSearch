@@ -1,22 +1,32 @@
 # !/bin/bash
 echo "Model Evaluation!"
 
-##################
-#### OPTIONS & ENV Variables
-##################
-DATA_PATH="../data/generated_summary_ver"
-# DATA_PATH="../data/new_summary_origin_20000"
-BSIZE=64 
+####################
+# For base checkpoint 
+python eval_beir.py --model_name_or_path facebook/mcontriever-msmarco --dataset ../data/generated_summary_ver/ --normalize_text --qrels_file high_lexical.filtered.test
 
-CKPT='facebook/mcontriever-msmarco' 
-# Help: Use trained ckpt => change STEP Env
-# CKPT='./checkpoint/re.final.finetuned.contriever/checkpoint/step-${STEP}'
+python eval_beir.py --model_name_or_path facebook/mcontriever-msmarco --dataset ../data/generated_summary_ver/ --normalize_text --qrels_file filtered.test
 
-echo "CKPT: $CKPT"
+python eval_beir.py --model_name_or_path facebook/mcontriever-msmarco --dataset ../data/new_summary_origin_20000/ --normalize_text --qrels_file high.lexical.test
 
-CUDA_VISIBLE_DEVICES=0 python eval_beir.py \
-    --model_name_or_path $CKPT \
-    --dataset $DATA_PATH \
-    --normalize_text \
-    --per_gpu_batch_size $BSIZE \
-    --split test 
+python eval_beir.py --model_name_or_path facebook/mcontriever-msmarco --dataset ../data/new_summary_origin_20000/ --normalize_text --qrels_file high.semantic.test
+
+
+# For PEFT tuned checkpoint
+python eval_beir.py --model_path facebook/mcontriever-msmarco --dataset ../data/generated_summary_ver/ --normalize_text --qrels_file high_lexical.filtered.test --use_peft --peft_model_path checkpoint/peft_loraR.8_loraAlpha.16_lr.5e-4/checkpoint/step-20000/
+
+python eval_beir.py --model_path facebook/mcontriever-msmarco --dataset ../data/generated_summary_ver/ --normalize_text --qrels_file filtered.test --use_peft --peft_model_path checkpoint/peft_loraR.8_loraAlpha.16_lr.5e-4/checkpoint/step-20000/
+
+python eval_beir.py --model_path facebook/mcontriever-msmarco --dataset ../data/new_summary_origin_20000/ --normalize_text --qrels_file high.lexical.test --use_peft --peft_model_path checkpoint/peft_loraR.8_loraAlpha.16_lr.5e-4/checkpoint/step-20000/
+
+python eval_beir.py --model_path facebook/mcontriever-msmarco --dataset ../data/new_summary_origin_20000/ --normalize_text --qrels_file high.semantic.test --use_peft --peft_model_path checkpoint/peft_loraR.8_loraAlpha.16_lr.5e-4/checkpoint/step-20000/
+
+
+# For Full finetuned checkpoint
+python eval_beir.py --model_path checkpoint/full_finetune.5e-5/checkpoint/step-20000/ --dataset ../data/generated_summary_ver/ --normalize_text --qrels_file high_lexical.filtered.test
+
+python eval_beir.py --model_path checkpoint/full_finetune.5e-5/checkpoint/step-20000/ --dataset ../data/generated_summary_ver/ --normalize_text --qrels_file filtered.test 
+
+python eval_beir.py --model_path checkpoint/full_finetune.5e-5/checkpoint/step-20000/ --dataset ../data/new_summary_origin_20000/ --normalize_text --qrels_file high.lexical.test 
+
+python eval_beir.py --model_path checkpoint/full_finetune.5e-5/checkpoint/step-20000/ --dataset ../data/new_summary_origin_20000/ --normalize_text --qrels_file high.semantic.test
