@@ -127,11 +127,8 @@ class Options:
         self.parser.add_argument("--use_flash_attn", action="store_true")
         self.parser.add_argument("--use_4bit_qunatization", action="store_true", help="Whether or not to use use_4bit_qunatization.")
         self.parser.add_argument("--use_8bit_qunatization", action="store_true", help="Whether or not to use use_8bit_qunatization.")
+        self.parser.add_argument("--wandb_run_name", default='temp', help="Run name of wandb project")
         
-
-
-
-
     def print_options(self, opt):
         message = ""
         for k, v in sorted(vars(opt).items()):

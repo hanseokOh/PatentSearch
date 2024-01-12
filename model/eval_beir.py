@@ -19,6 +19,8 @@ import src.utils
 import src.dist_utils
 import src.contriever
 
+from peft import PeftModel, PeftConfig
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,7 +37,20 @@ def main(args):
     ## HS
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     logger.info(f"Device info: {device}")
-    model, tokenizer, _ = src.contriever.load_retriever(args.model_name_or_path)
+
+    model, tokenizer, _ = src.contriever.load_retriever(args.model_path)
+    
+    if args.use_peft:
+        peft_model_id = args.peft_model_path
+        logger.info(f"PEFT mode activated - [PEFT ckpt] {peft_model_id} &  [Base ckpt] {args.model_path}")
+        config = PeftConfig.from_pretrained(peft_model_id)
+        model = PeftModel.from_pretrained(model, peft_model_id)
+
+    # if not args.use_peft:
+    #     model, tokenizer, retriever_model_id = src.contriever.load_retriever(args.model_path) #, args.pooling, args.random_init)
+    # else:
+    #     model, tokenizer, retriever_model_id = src.peft_model.create_and_prepare_model(args)
+
     model = model.to(device)
     model.eval()
     query_encoder = model
@@ -59,6 +74,7 @@ def main(args):
         save_results_path=args.save_results_path,
         lower_case=args.lower_case,
         normalize_text=args.normalize_text,
+        qrels_file=args.qrels_file,
     )
 
     if src.dist_utils.is_main():
@@ -75,7 +91,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--per_gpu_batch_size", default=128, type=int, help="Batch size per GPU/CPU for indexing.")
     parser.add_argument("--output_dir", type=str, default="./my_experiment", help="Output directory")
-    parser.add_argument("--model_name_or_path", type=str, help="Model name or path")
+    parser.add_argument("--model_path", type=str, help="Model name or path")
     parser.add_argument(
         "--score_function", type=str, default="dot", help="Metric used to compute similarity between two embeddings"
     )
@@ -90,6 +106,11 @@ if __name__ == "__main__":
     parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
     parser.add_argument("--main_port", type=int, default=-1, help="Main port (for multi-node SLURM jobs)")
     parser.add_argument("--split", type=str, default="test", help="Choose mode for qrels")
+    parser.add_argument("--qrels_file", type=str, default="test", help="Choose mode for qrels")
+    # PEFT 
+    parser.add_argument("--use_peft", action="store_true", help="PEFT mode")
+    parser.add_argument("--peft_model_path", type=str, help="PEFT path")
+    
 
     args, _ = parser.parse_known_args()
     main(args)

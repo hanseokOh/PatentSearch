@@ -11,6 +11,7 @@ import json
 import numpy as np
 import torch.distributed as dist
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
+import wandb
 
 from src.options import Options
 from src import data, beir_utils, slurm, dist_utils, utils, contriever, finetuning_data, inbatch
@@ -68,7 +69,6 @@ def finetuning(opt, model, optimizer, scheduler, tokenizer, step):
     while step < opt.total_steps:
         logger.info(f"Start epoch {epoch}, number of batches: {len(train_dataloader)}")
         for i, batch in enumerate(train_dataloader):
-            # batch = {key: value.cuda() if isinstance(value, torch.Tensor) else value for key, value in batch.items()}
             batch = {key: value.to(model.device) if isinstance(value, torch.Tensor) else value for key, value in batch.items()}
             step += 1
 
@@ -90,14 +90,27 @@ def finetuning(opt, model, optimizer, scheduler, tokenizer, step):
 
             if step % opt.log_freq == 0:
                 log = f"{step} / {opt.total_steps}"
+                wandb_info={}
                 for k, v in sorted(run_stats.average_stats.items()):
                     log += f" | {k}: {v:.3f}"
                     if tb_logger:
                         tb_logger.add_scalar(k, v, step)
+                        
+                        wandb_info[k.replace('/','_')]=v
+                        
                 log += f" | lr: {scheduler.get_last_lr()[0]:0.3g}"
                 log += f" | Memory: {torch.cuda.max_memory_allocated()//1e9} GiB"
 
+                wandb_info['train_epoch']=epoch
+                wandb_info['train_step']=step
+                wandb_info['lr']=float(f"{scheduler.get_last_lr()[0]:0.3g}")
+                wandb_info['memory']=float(f"{torch.cuda.max_memory_allocated()//1e9}")
+
+                # 🐝 2️⃣ Log metrics from your script to W&B
+                if opt.local_rank==0:
+                    wandb.log(wandb_info)
                 logger.info(log)
+                
                 run_stats.reset()
 
             if step % opt.eval_freq == 0:
@@ -105,21 +118,36 @@ def finetuning(opt, model, optimizer, scheduler, tokenizer, step):
                 evaluate(opt, eval_model, tokenizer, tb_logger, step)
 
                 if step % opt.save_freq == 0 and dist_utils.get_rank() == 0:
-                    utils.save(
-                        eval_model,
-                        optimizer,
-                        scheduler,
-                        step,
-                        opt,
-                        opt.output_dir,
-                        f"step-{step}",
-                    )
+                    if opt.use_peft:
+                        utils.peft_save(
+                            eval_model,
+                            optimizer,
+                            scheduler,
+                            step,
+                            opt,
+                            opt.output_dir,
+                            f"step-{step}",
+                        )
+                        
+                    else:
+                        utils.save(
+                            eval_model,
+                            optimizer,
+                            scheduler,
+                            step,
+                            opt,
+                            opt.output_dir,
+                            f"step-{step}",
+                        )
                 model.train()
 
             if step >= opt.total_steps:
                 break
 
         epoch += 1
+
+    # Mark the run as finished
+    wandb.finish()
 
 
 def evaluate(opt, model, tokenizer, tb_logger, step):
@@ -189,6 +217,7 @@ def evaluate(opt, model, tokenizer, tb_logger, step):
         acc = 100 * acc
 
         message = []
+        wandb_log={}
         if dist_utils.is_main():
             message = [f"eval acc: {acc:.2f}%", f"eval mrr: {mrr:.3f}"]
             logger.info(" | ".join(message))
@@ -196,13 +225,18 @@ def evaluate(opt, model, tokenizer, tb_logger, step):
                 tb_logger.add_scalar(f"eval_acc", acc, step)
                 tb_logger.add_scalar(f"mrr", mrr, step)
 
+                wandb_log['eval_acc']=acc
+                wandb_log['mrr']=mrr
+                wandb_log['eval_step']=step
 
-def main():
+                if opt.local_rank==0:
+                    wandb.log(wandb_log)
+
+
+def main(opt):
     logger.info("Start")
-
-    options = Options()
-    opt = options.parse()
-
+    # wandb.login()
+    
     torch.manual_seed(opt.seed)
     if torch.cuda.is_available():
         slurm.init_distributed_mode(opt)
@@ -220,7 +254,6 @@ def main():
 
     step = 0
 
-
     if not opt.use_peft:
         retriever, tokenizer, retriever_model_id = contriever.load_retriever(opt.model_path, opt.pooling, opt.random_init)
     else:
@@ -230,7 +263,6 @@ def main():
     model = inbatch.InBatch(opt, retriever, tokenizer)
 
     device = "cuda" if torch.cuda.is_available() else 'cpu'
-    # model = model.cuda()
     model = model.to(device)
 
     optimizer, scheduler = utils.set_optim(opt, model)
@@ -253,4 +285,16 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    options = Options()
+    opt = options.parse()
+
+    if opt.local_rank==0:
+        wandb.init(
+            # Set the project where this run will be logged
+            project="SmartPatent", 
+            # We pass a run name (otherwise it’ll be randomly assigned, like sunshine-lollypop-10)
+            name=f"{opt.wandb_run_name}", 
+            # Track hyperparameters and run metadata
+            config=opt)
+    
+    main(opt)

@@ -151,6 +151,7 @@ def evaluate_model(
     save_results_path=None,
     lower_case=False,
     normalize_text=False,
+    qrels_file='test'
 ):
 
     metrics = defaultdict(list)  # store final results
@@ -184,9 +185,12 @@ def evaluate_model(
     # HS: edit - Add code for custom dataset
     print("### Custom data mode - split:",split)
     data_path = os.path.join(beir_dir,dataset)
+    qrels_path = os.path.join(data_path,f'qrels/{qrels_file}.tsv')
     print("data_path:",data_path)
+    print("qrels_path:",qrels_path)
 
-    corpus, queries, qrels = GenericDataLoader(data_folder=data_path).load(split=split) 
+    # corpus, queries, qrels = GenericDataLoader(data_folder=data_path).load(split=split) 
+    corpus, queries, qrels = GenericDataLoader(data_folder=data_path,qrels_file = qrels_path).load_custom()
 
     print(f"loaded data info: - corpus:{len(corpus)}, queries:{len(queries)}, qrels:{len(qrels)}")
     results = retriever.retrieve(corpus, queries)

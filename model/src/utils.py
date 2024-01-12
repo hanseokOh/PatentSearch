@@ -43,6 +43,32 @@ def symlink_force(target, link_name):
             raise e
 
 
+def peft_save(model, optimizer, scheduler, step, opt, dir_path, name):
+    model_to_save = model.module if hasattr(model, "module") else model
+    path = os.path.join(dir_path, "checkpoint")
+    epoch_path = os.path.join(path, name)  # "step-%s" % step)
+    os.makedirs(epoch_path, exist_ok=True)
+    cp = os.path.join(path, "latest")
+    
+    peft_fp = epoch_path
+    fp = os.path.join(epoch_path, "checkpoint.pth")
+
+    checkpoint = {
+        "step": step,
+        # "model": model_to_save.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "scheduler": scheduler.state_dict(),
+        "opt": opt,
+    }
+
+    model.save_pretrained(peft_fp) 
+    torch.save(checkpoint, fp)
+
+    symlink_force(epoch_path, cp)
+    if not name == "lastlog":
+        logger.info(f"Saving model to {epoch_path}")
+
+
 def save(model, optimizer, scheduler, step, opt, dir_path, name):
     model_to_save = model.module if hasattr(model, "module") else model
     path = os.path.join(dir_path, "checkpoint")
@@ -57,11 +83,11 @@ def save(model, optimizer, scheduler, step, opt, dir_path, name):
         "scheduler": scheduler.state_dict(),
         "opt": opt,
     }
+
     torch.save(checkpoint, fp)
     symlink_force(epoch_path, cp)
     if not name == "lastlog":
         logger.info(f"Saving model to {epoch_path}")
-
 
 def load(model_class, dir_path, opt, reset_params=False):
     epoch_path = os.path.realpath(dir_path)

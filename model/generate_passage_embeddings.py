@@ -22,6 +22,7 @@ import src.utils
 import src.data
 import src.normalize_text
 
+from peft import PeftModel, PeftConfig
 
 def embed_passages(args, passages, model, tokenizer):
     total = 0
@@ -69,9 +70,17 @@ def embed_passages(args, passages, model, tokenizer):
 
 
 def main(args):
-    model, tokenizer, _ = src.contriever.load_retriever(
-        args.model_name_or_path)
-    print(f"Model loaded from {args.model_name_or_path}.", flush=True)
+    model, tokenizer, _ = src.contriever.load_retriever(args.model_name_or_path)
+
+    ## add    
+    if args.use_peft:
+        peft_model_id = args.peft_model_path
+        print(f"PEFT mode activated - [PEFT ckpt] {peft_model_id} &  [Base ckpt] {args.model_name_or_path}")
+        config = PeftConfig.from_pretrained(peft_model_id)
+        model = PeftModel.from_pretrained(model, peft_model_id)
+    else:
+        print(f"Model loaded from {args.model_name_or_path}.", flush=True)
+
     model.eval()
     model = model.cuda()
     if not args.no_fp16:
@@ -132,7 +141,10 @@ if __name__ == "__main__":
                         help="lowercase text before encoding")
     parser.add_argument("--normalize_text", action="store_true",
                         help="lowercase text before encoding")
-
+    
+    parser.add_argument("--use_peft", action="store_true", help="PEFT mode")
+    parser.add_argument("--peft_model_path", type=str, help="PEFT path")
+    
     args = parser.parse_args()
 
     src.slurm.init_distributed_mode(args)
